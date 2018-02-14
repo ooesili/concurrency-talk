@@ -1,0 +1,424 @@
+An Introduction to Concurrency
+In Go
+22 Jan 2018
+
+Wesley Merkel
+Systems Engineer, Uptake
+https://github.com/ooesili
+@ooesili
+
+* Hello
+
+You're allowed to ask questions whenever, but I might tell you to write it down for the end if I think it requires a long answer.
+
+* Questions
+
+Who here is a web developer? (who else is here?)
+
+Who has done concurrent programming in other languages? Which ones?
+
+Who knows what a mutex is?
+
+* What is concurrency?
+
+* What it is
+
+Concurrency is a tool for decoupling the execution of independent processes in a program.
+
+The concurrency primitives in Go are first and foremost tools for designing programs. The fact that concurrent programs can be run across multiple cores, often with a speedup, is just a consequence of their design.
+
+* What it is not
+
+It is _not_ simply a way to run code on multiple CPU cores to make it faster.
+
+It is _not_ a silver bullet that will make all of your programs faster and better.
+
+* Concurrency in Go
+
+Goroutines and channels are the bread and butter of writing concurrent programs in Go.
+
+The `go` keyword is used to launch new independent processes, and channels are used to communicate between them and coordinate their execution.
+
+* Goroutines
+
+* Launching a goroutine
+
+The `go` keyword is used to launch a function in a new goroutine.
+
+The function runs "in the background", in a separate thread of control. The calling code does not wait for the function to return, it immediately continues executing code in the current function.
+
+.play examples/sleep_sync/main.go /START OMIT/,/END OMIT/
+
+Go programs end when the `main` goroutine returns, no matter how many other goroutines are running, or what they are doing.
+
+.play examples/sleep_go/main.go /START OMIT/,/END OMIT/
+
+* Closures
+
+Using closures are common when running goroutines. Notice the `()` at the bottom (`go` must always be followed by a function call).
+
+  go func() {
+    fmt.Print("Hello, ")
+    fmt.Print("world!")
+    fmt.Print("\n")
+  }()
+
+* What is a goroutine?
+
+A goroutine is a lightweight execution thread managed by the Go runtime.
+
+Goroutines do not correspond directly with OS threads. They are multiplexed on top of a fixed number of OS threads by the Go runtime.
+
+Thanks to the Go runtime, and the fact that goroutines only cost 2KB each, it is feasible to have programs run with thousands of goroutines.
+
+# * Why is this important?
+
+# Go shines on I/O bound workloads. The nature of goroutines makes it simple to write programs that perform and handle large numbers of concurrent I/O operations.
+
+# For example, `net/http.Server` launches a new goroutine per request. This happens without any sort of thread pooling or async I/O callback juggling (the language runtime takes care of that).
+
+* An innocent example
+
+.play examples/count_sync/main.go /START OMIT/,/END OMIT/
+
+* Every rose has its thorn
+
+.play examples/count_race/main.go /START OMIT/,/END OMIT/
+.caption You can shift+click `Run` to enable the race detector
+
+* Race conditions
+
+Race conditions can occur when multiple goroutines read and write to the same memory location without using something to serialize there access.
+
+The reads and write operations happened _out_of_order_.
+
+  G1        Main      G2
+  | 1 <---- |         |
+  |         |         |
+  |         | ----> 1 |
+  |         |         |
+  | ----> 2 |         |
+  |         |         |
+  |         | 2 <---- |
+
+They can cause incorrect and, more importantly, non-deterministic outcomes from your code.
+
+* Channels
+
+* Channels
+
+Channels are like little pipes that can be used to safely send data between goroutines.
+
+  // declaring a type
+  var numbers chan int
+
+  // create a channel
+  numbers = make(chan int)
+
+  // sending
+  numbers <- 4
+
+  // receiving
+  number := <- numbers
+
+The zero value for a channel is `nil`, which means you need to use `make` to create a new channel before you can send and receive over it.
+
+* Contrived counting
+
+.play examples/count_channel/main.go /START OMIT/,/END OMIT/
+
+* Sending and receiving
+
+Sending and receiving over a channel are blocking operations.
+
+The operation will only occur when there are goroutines sending and receiving on both sides of the channel.
+
+.play examples/block/main.go /START OMIT/,/END OMIT/
+
+* Why concurrency?
+
+* Independent Processes
+
+Concurrency matters when don't you need, or want, every operation in program to have a total order.
+
+It doesn't matter if some things happen before or happen after one another, as long as certain critical points in your code happen in the right order.
+
+Since the order of execution doesn't matter between all parts of your program, those independent parts can happen in parallel.
+
+* Communicating between goroutines
+
+In order to safely pass a piece of data between two goroutines, two things need to happen.
+
+Goroutine A needs to write a piece of data, _then_ goroutine B needs to read it.
+
+In that order.
+
+Not B _then_ A. Not B and A at the same time. A _then_ B.
+
+* Why channels matter
+
+Channels simultaneously introduce _order_ to operations between to goroutines, and a way to send data between them.
+
+Both ends of a channel operation block until they are both ready to proceed.
+
+When a channel operation goes through:
+
+- You have just sent a piece of data between goroutines.
+
+- And you know exactly where both goroutines are in their execution.
+
+* An example: concurrent API calls
+
+Each API call is likely made up of many operations, but this program will always run correctly, because it synchronizes the important parts using channels.
+
+  responseChan1 := make(chan Response1)
+  responseChan2 := make(chan Response2)
+  responseChan3 := make(chan Response3)
+
+  // the order of these processes does not matter
+  go func() { responseChan1 <- apiCall1() }()
+  go func() { responseChan2 <- apiCall2() }()
+  go func() { responseChan3 <- apiCall3() }()
+
+  response1 := <-responseChan1
+  response2 := <-responseChan2
+  response3 := <-responseChan3
+
+  // as long is this happens after all 3 have completed
+  processResponses(response1, response2, response3)
+
+* Back to channels
+
+# You can have any number of goroutines sending and receiving over a single channel.
+
+# Which producer and receiver actually gets to perform the operation is picked pseudo-randomly.
+
+* Closing channels
+
+Channels can be closed when you are done sending values to them.
+
+  ch := make(chan string)
+
+  // closing a channel
+  close(ch)
+
+  // checking for a closed channel
+  value, ok := ch
+  if !ok {
+    fmt.Println("closed!")
+  }
+
+* Range over a channel
+
+You can receive from a channel using a range clause, which will keep receiving values until the channel is closed.
+
+  for value := range ch {
+    fmt.Println(value)
+  }
+
+This a more verbose way of writing the same thing.
+
+  for {
+    value, ok := <-ch
+    if !ok {
+      break
+    }
+    fmt.Println(value)
+  }
+
+* Range over a channel (example)
+
+Closing channels is useful when you don't know in advance how many values will be sent over a channel. It signals "I'm done sending values now".
+
+.play examples/closing_channels/main.go /START OMIT/,/END OMIT/
+
+* Channel gotchas
+Receiving on a closed channel immediately returns a zero value without blocking.
+
+  // returns ""
+  <-ch
+
+Sending on a closed channel causes a panic. If this is a possibility in your code, your design is wrong.
+
+  // panics
+  ch <- "oops"
+
+Sending or receiving on `nil` channel will block forever.
+
+  var ch chan bool
+  // both will block forever
+  <-ch
+  ch <- true
+
+* Select statements
+
+The `select` statement can be used to choose between multiple send and receive operations.
+
+`select` will block until one of the operations can proceed.
+
+  select {
+  case ch1 <- "hello":
+    fmt.Println("said hello to ch1")
+  case message := <-ch2:
+    fmt.Println("received message from ch2:", message)
+  case message := <-ch3:
+    fmt.Println("received message from ch3:", message)
+  }
+
+This is useful when talking to multiple goroutines, or when you need to react to different kinds of events.
+
+* The default case
+
+An optional `default` case can be given, and which is chosen `default` if no channel operations can immediately proceed.
+
+A `select` statement with a `default` case will _never_ block.
+
+  select {
+  case ch1 <- "beep boop":
+  case <-ch2:
+  default:
+    fmt.Println("no channels were ready")
+  }
+
+* Designing concurrent code
+
+* Concurrency is hard
+
+Go makes writing concurrent code easy, but it doesn't mean _all_ code should be concurrent.
+
+Concurrent code is susceptible to a whole class of bugs (deadlocks, race conditions, etc.) that simply don't exist in single-threaded code.
+
+With great power comes great responsibility.
+
+* Use sparingly
+
+Keep concurrent sections of your code small, and well tested.
+
+Most of your code should have no idea that its executing concurrently.
+
+.image images/jurassic.gif
+
+* Hide it
+
+Tuck away as much concurrent code as you can behind synchronous interfaces.
+
+If you run into one of those nasty concurrency bugs, the amount of places it could be is greatly reduced.
+
+You won't have to go through the pain of writing mocks that launch their own goroutines.
+
+  thingDoer := thingdoer.New()
+  defer thingDoer.Close()
+
+  thingDoer.DoAThing()
+  thingDoer.DoSomethingElse()
+
+* Use the race detector
+
+Go comes with an amazing race detector that can detect a lot of race conditions at runtime.
+
+Write tests that exercise your concurrent code and run them `go test -race`.
+
+The race detector is not perfect, but it is great.
+
+Test driving with the race detector on is a great way to give confidence to your designs.
+
+* Cleaning up after yourself
+
+* Cleaning up after yourself
+
+Goroutines are not collected by the garbage collector.
+
+They will continue using resources until they return.
+
+More importantly, if you don't mindfully stop every goroutine, you can cause unexpected outages or even data loss in certain scenarios.
+
+* Be responsible
+
+Every time you use the `go` keyword, you should know _exactly_ when that goroutine will stop.
+
+You should always wait for every goroutine to return at some point in your code.
+
+The `main` goroutine should _always_ be the last goroutine to return.
+
+* WaitGroups
+
+WaitGroups are a great way to manage the lifecyle of goroutines.
+
+  var waitGroup sync.WaitGroup
+
+Call `.Add` before every new goroutine is launches.
+
+Call `.Done` at the every end of each goroutine's execution, right before it returns.
+
+Call `.Wait` on the main thread to wait for every goroutine to return
+
+* Instead of this...
+
+  responseChan1 := make(chan Response1)
+  responseChan2 := make(chan Response2)
+  responseChan3 := make(chan Response3)
+
+  go func() { responseChan1 <- apiCall1() }()
+  go func() { responseChan2 <- apiCall2() }()
+  go func() { responseChan3 <- apiCall3() }()
+
+  response1 := <-responseChan1
+  response2 := <-responseChan2
+  response3 := <-responseChan3
+
+  processResponses(response1, response2, response3)
+
+* We can use a WaitGroup
+
+  var response1 Response1
+  var response2 Response2
+  var response3 Response3
+
+  var waitGroup sync.WaitGroup
+
+  waitGroup.Add(3)
+  go func() { response1 = apiCall1(); waitGroup.Done() }()
+  go func() { response2 = apiCall2(); waitGroup.Done() }()
+  go func() { response3 = apiCall3(); waitGroup.Done() }()
+
+  waitGroup.Wait()
+
+  processResponses(response1, response2, response3)
+
+WaitGroups also provider ordering. After `.Wait` returns, you know that everything that happened before each `.Done` call can be safely read.
+
+* TL;DR
+
+* TL;DR
+
+Concurrency is a design tool, not just an optimization.
+
+The `go` keyword launches new goroutines.
+
+Channels can be used to safely transfer data between goroutines.
+
+Channels provide ordering between goroutines _and_ a way to share data.
+
+* TL;DR (cont)
+
+Concurrent code should be kept to a minimum.
+
+Every goroutine's lifetime should be known and managed.
+
+WaitGroups can be used to manage the lifetime of goroutines.
+
+The race detector is your new best friend
+
+* Learning resources
+
+Go By Example (goroutines)
+.link https://gobyexample.com/goroutines
+
+The Go Memory Model
+.link https://golang.org/ref/mem
+
+Concurrency is not parellelism (talk)
+.link https://blog.golang.org/concurrency-is-not-parallelism
+
+Go Concurrency Patterns: Pipelines and cancellation
+.link https://blog.golang.org/pipelines
