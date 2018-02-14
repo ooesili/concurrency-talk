@@ -203,7 +203,7 @@ Channels can be closed when you are done sending values to them.
   close(ch)
 
   // checking for a closed channel
-  value, ok := ch
+  value, ok := <-ch
   if !ok {
     fmt.Println("closed!")
   }
